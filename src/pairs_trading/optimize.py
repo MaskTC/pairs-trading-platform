@@ -142,3 +142,61 @@ def grid_search(
         "test_metrics": test_metrics,
         "overfit_flag": detect_overfit(best_train_sharpe, test_metrics["sharpe"]),
     }
+
+
+BASELINE_PARAMS = {"window": 30, "entry_z": 2.0, "exit_z": 0.5}
+"""Textbook-default signal parameters, used as the no-tuning baseline."""
+
+
+def baseline_vs_optimized(
+    price_a,
+    price_b,
+    best_params: dict,
+    beta: float,
+    train_frac: float = 0.6,
+    cost_model=None,
+    initial_capital: float = 10_000.0,
+    baseline_params: dict | None = None,
+) -> dict:
+    """Sharpe improvement of tuned params over the untuned baseline.
+
+    Both parameter sets are evaluated once on the held-out test slice with
+    the train-frozen ``beta`` and identical costs, so the difference
+    isolates the value of the grid search. Returns
+    ``{"baseline_sharpe", "optimized_sharpe", "improvement"}`` where
+    ``improvement = optimized_sharpe - baseline_sharpe``.
+    """
+    if baseline_params is None:
+        baseline_params = BASELINE_PARAMS
+    a = pd.Series(price_a, dtype=float)
+    b = pd.Series(price_b, dtype=float)
+    split = int(len(a) * train_frac)
+    a_te, b_te = a.iloc[split:], b.iloc[split:]
+
+    def _test_sharpe(params: dict) -> float:
+        z = compute_zscore(
+            compute_spread(a_te, b_te, float(beta)),
+            window=int(params["window"]),
+        )
+        sig = generate_signals(
+            z,
+            entry_z=float(params["entry_z"]),
+            exit_z=float(params["exit_z"]),
+        )
+        res = run_backtest(
+            a_te,
+            b_te,
+            float(beta),
+            sig["target"],
+            cost_model=cost_model,
+            initial_capital=float(initial_capital),
+        )
+        return float(metrics.sharpe_ratio(res["daily_returns"]))
+
+    base_sharpe = _test_sharpe(baseline_params)
+    opt_sharpe = _test_sharpe(best_params)
+    return {
+        "baseline_sharpe": base_sharpe,
+        "optimized_sharpe": opt_sharpe,
+        "improvement": opt_sharpe - base_sharpe,
+    }

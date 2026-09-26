@@ -76,3 +76,39 @@ def test_profitable_on_mean_reverting_synthetic():
     )
     assert out["best_train_sharpe"] > 0
     assert out["test_metrics"]["n_trades"] >= 0  # runs cleanly out of sample
+
+
+def test_grid_search_handles_160_combinations():
+    # The resume claims 150+ parameter combinations: 8 x 5 x 4 = 160.
+    a, b = make_mean_reverting_prices(n=250, seed=7)
+    out = optimize.grid_search(
+        a, b,
+        windows=[10, 15, 20, 30, 45, 60, 90, 120],
+        entry_zs=[1.0, 1.5, 2.0, 2.5, 3.0],
+        exit_zs=[0.0, 0.25, 0.5, 0.75],
+        train_frac=0.6,
+    )
+    assert len(out["results"]) == 160
+    best_idx = out["results"]["train_sharpe"].idxmax()
+    for col in ("window", "entry_z", "exit_z"):
+        assert out["best_params"][col] == out["results"].loc[best_idx, col]
+
+
+def test_baseline_vs_optimized_reports_improvement():
+    a, b = make_mean_reverting_prices(n=300, seed=11)
+    gs = optimize.grid_search(
+        a, b, windows=[20, 30], entry_zs=[1.5, 2.0], exit_zs=[0.0, 0.5]
+    )
+    out = optimize.baseline_vs_optimized(
+        a, b, gs["best_params"], gs["train_beta"], train_frac=0.6
+    )
+    assert set(out) == {"baseline_sharpe", "optimized_sharpe", "improvement"}
+    assert out["improvement"] == pytest.approx(
+        out["optimized_sharpe"] - out["baseline_sharpe"]
+    )
+    for v in out.values():
+        assert isinstance(v, float)
+
+
+def test_baseline_params_constant_is_documented_default():
+    assert optimize.BASELINE_PARAMS == {"window": 30, "entry_z": 2.0, "exit_z": 0.5}
